@@ -390,10 +390,46 @@ pub enum ToolType {
     Function,
 }
 
-// Re-export ToolDefinition and FunctionTool from xai-grok-tools.
-// The canonical definitions now live there; this re-export keeps
-// all existing `crate::sampling::types::ToolDefinition` imports working.
+// The full Grok Build workspace keeps the runtime tool definitions as its
+// default. Embedded consumers can disable that feature to avoid pulling the
+// complete file, shell, PDF, cloud and workspace tool closure into a sampler.
+#[cfg(feature = "runtime-tool-definitions")]
 pub use xai_grok_tools::types::definition::{FunctionTool, ToolDefinition};
+
+#[cfg(not(feature = "runtime-tool-definitions"))]
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct ToolDefinition {
+    #[serde(rename = "type")]
+    pub kind: ToolType,
+    pub function: FunctionTool,
+}
+
+#[cfg(not(feature = "runtime-tool-definitions"))]
+impl ToolDefinition {
+    pub fn function(
+        name: impl Into<String>,
+        description: Option<impl Into<String>>,
+        parameters: serde_json::Value,
+    ) -> Self {
+        Self {
+            kind: ToolType::Function,
+            function: FunctionTool {
+                name: name.into(),
+                description: description.map(Into::into),
+                parameters,
+            },
+        }
+    }
+}
+
+#[cfg(not(feature = "runtime-tool-definitions"))]
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct FunctionTool {
+    pub name: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    pub parameters: serde_json::Value,
+}
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(untagged)]

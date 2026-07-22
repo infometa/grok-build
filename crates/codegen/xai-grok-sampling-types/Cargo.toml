@@ -14,10 +14,14 @@ serde_json = { workspace = true, features = ["preserve_order"] }
 thiserror = { workspace = true }
 tracing = { workspace = true }
 xai-grok-compaction = { path = "../../common/xai-grok-compaction" }
-xai-grok-tools = { path = "../xai-grok-tools" }
+xai-grok-tools = { path = "../xai-grok-tools", optional = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
 
 [lints]
 workspace = true
+
+[features]
+default = ["runtime-tool-definitions"]
+runtime-tool-definitions = ["dep:xai-grok-tools"]

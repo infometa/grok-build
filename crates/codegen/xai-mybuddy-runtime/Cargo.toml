@@ -9,8 +9,8 @@ description = "Stable embedded sampling facade for the MyBuddy desktop product"
 serde = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true, features = ["rt", "sync"] }
-xai-grok-sampler = { path = "../xai-grok-sampler" }
-xai-grok-sampling-types = { path = "../xai-grok-sampling-types" }
+xai-grok-sampler = { path = "../xai-grok-sampler", default-features = false }
+xai-grok-sampling-types = { path = "../xai-grok-sampling-types", default-features = false }
 
 [lints]
 workspace = true

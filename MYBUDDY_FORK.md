@@ -35,3 +35,10 @@ That crate is the stable in-process product seam over Grok Build's sampler and
 must not expose shell, ACP, authentication, or internal sampler types to the
 MyBuddy repository. Product releases pin this repository by commit, never by a
 moving branch name.
+
+The facade disables the `runtime-tool-definitions` default feature on the
+sampler data layer. This keeps model sampling independent from the full Grok
+Build tool closure (filesystem extractors, cloud SDKs, shell/runtime tooling
+and workspace services). Full-workspace consumers retain the existing default;
+MyBuddy attaches its own reviewed command, permission and Skills layers above
+the sampler instead.
