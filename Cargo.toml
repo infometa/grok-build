@@ -61,6 +61,7 @@ members = [
     "crates/codegen/xai-hooks-plugins-types",
     "crates/codegen/xai-hunk-tracker",
     "crates/codegen/xai-mixpanel",
+    "crates/codegen/xai-mybuddy-runtime",
     "crates/codegen/xai-prompt-queue",
     "crates/codegen/xai-ratatui-inline",
     "crates/codegen/xai-ratatui-textarea",

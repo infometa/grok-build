@@ -27,3 +27,11 @@ upstream `main` for development or releases.
 - macOS arm64 and Windows x64 must pass the runtime regression matrix together.
 - Skills, MCP, Hooks, system commands, permissions, cancellation and session
   recovery remain required capabilities.
+
+## Embedded product facade
+
+MyBuddy consumes the dedicated `xai-mybuddy-runtime` crate from this branch.
+That crate is the stable in-process product seam over Grok Build's sampler and
+must not expose shell, ACP, authentication, or internal sampler types to the
+MyBuddy repository. Product releases pin this repository by commit, never by a
+moving branch name.
