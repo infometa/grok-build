@@ -18,6 +18,8 @@ use xai_grok_sampling_types::{
     ToolSpec,
 };
 
+const ANTHROPIC_VERSION: &str = "2023-06-01";
+
 /// API wire protocol used by a custom provider.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -301,6 +303,13 @@ impl TurnHandle {
 }
 
 fn sampler_config(config: &ModelConfig) -> SamplerConfig {
+    let extra_headers = if config.protocol == Protocol::Messages {
+        [("anthropic-version".into(), ANTHROPIC_VERSION.into())]
+            .into_iter()
+            .collect()
+    } else {
+        Default::default()
+    };
     SamplerConfig {
         api_key: config.api_key.clone(),
         base_url: config.base_url.trim_end_matches('/').to_string(),
@@ -314,6 +323,7 @@ fn sampler_config(config: &ModelConfig) -> SamplerConfig {
             Protocol::Messages => AuthScheme::XApiKey,
             Protocol::ChatCompletions | Protocol::Responses => AuthScheme::Bearer,
         },
+        extra_headers,
         context_window: config.context_window,
         reasoning_effort: config.reasoning_effort.map(map_effort),
         max_retries: Some(config.max_retries),
@@ -430,9 +440,9 @@ fn map_event(event: SamplingEvent) -> RuntimeEvent {
             context_window: metadata.context_window.map(u64::from),
             max_completion_tokens: metadata.max_completion_tokens.map(u64::from),
         },
-        SamplingEvent::BackendToolCallStarted {
-            call_id, name, ..
-        } => RuntimeEvent::BackendToolStarted { call_id, name },
+        SamplingEvent::BackendToolCallStarted { call_id, name, .. } => {
+            RuntimeEvent::BackendToolStarted { call_id, name }
+        }
         SamplingEvent::BackendToolCallCompleted {
             call_id,
             name,
@@ -464,7 +474,9 @@ fn map_event(event: SamplingEvent) -> RuntimeEvent {
                 output: TurnOutput {
                     text: response.assistant_text(),
                     tool_calls,
-                    stop_reason: response.stop_reason.map(|reason| reason.as_str().to_string()),
+                    stop_reason: response
+                        .stop_reason
+                        .map(|reason| reason.as_str().to_string()),
                     usage,
                 },
             }
@@ -506,6 +518,21 @@ mod tests {
         let config = sampler_config(&model_config(Protocol::Messages));
         assert_eq!(config.api_backend, ApiBackend::Messages);
         assert_eq!(config.auth_scheme, AuthScheme::XApiKey);
+        assert_eq!(
+            config
+                .extra_headers
+                .get("anthropic-version")
+                .map(String::as_str),
+            Some(ANTHROPIC_VERSION)
+        );
+    }
+
+    #[test]
+    fn openai_protocols_do_not_receive_anthropic_headers() {
+        for protocol in [Protocol::ChatCompletions, Protocol::Responses] {
+            let config = sampler_config(&model_config(protocol));
+            assert!(!config.extra_headers.contains_key("anthropic-version"));
+        }
     }
 
     #[test]
