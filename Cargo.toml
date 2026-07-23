@@ -32,6 +32,7 @@ members = [
     "crates/codegen/xai-grok-memory",
     "crates/codegen/xai-grok-mermaid",
     "crates/codegen/xai-grok-models",
+    "crates/codegen/xai-mybuddy-runtime",
     "crates/codegen/xai-grok-pager",
     "crates/codegen/xai-grok-pager-bin",
     "crates/codegen/xai-grok-pager-minimal",
