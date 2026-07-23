@@ -12,6 +12,9 @@ tokio = { workspace = true, features = ["rt", "sync"] }
 xai-grok-sampler = { path = "../xai-grok-sampler", default-features = false }
 xai-grok-sampling-types = { path = "../xai-grok-sampling-types", default-features = false }
 xai-grok-compaction = { path = "../../common/xai-grok-compaction" }
+xai-grok-subagent-resolution = { path = "../xai-grok-subagent-resolution" }
+xai-grok-tools = { path = "../xai-grok-tools", default-features = false }
+xai-tool-types.workspace = true
 
 [lints]
 workspace = true

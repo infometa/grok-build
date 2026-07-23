@@ -14342,6 +14342,9 @@ dependencies = [
  "xai-grok-compaction",
  "xai-grok-sampler",
  "xai-grok-sampling-types",
+ "xai-grok-subagent-resolution",
+ "xai-grok-tools",
+ "xai-tool-types",
 ]
 
 [[package]]
