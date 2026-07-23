@@ -8,14 +8,15 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::fmt::{Debug, Display, Formatter};
+use std::sync::Arc;
 use tokio::sync::mpsc;
 use xai_grok_sampler::{
     AuthScheme, RequestId, RetryPolicy, SamplerActor, SamplerConfig, SamplerHandle,
     SamplingChannel, SamplingEvent,
 };
 use xai_grok_sampling_types::{
-    ApiBackend, ConversationItem, ConversationRequest, ConversationToolChoice, ReasoningEffort,
-    ToolSpec,
+    ApiBackend, AssistantItem, ConversationItem, ConversationRequest, ConversationToolChoice,
+    ReasoningEffort, ToolCall as SamplingToolCall, ToolSpec,
 };
 
 const ANTHROPIC_VERSION: &str = "2023-06-01";
@@ -135,6 +136,8 @@ pub enum InputItem {
     Assistant {
         content: String,
         model: Option<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        tool_calls: Vec<ToolCall>,
     },
     ToolResult {
         call_id: String,
@@ -360,12 +363,22 @@ fn conversation_request(request: TurnRequest) -> ConversationRequest {
                 InputItem::User { content } => ConversationItem::user(content),
                 InputItem::Assistant {
                     content,
-                    model: Some(model),
-                } => ConversationItem::assistant_with_model(content, model),
-                InputItem::Assistant {
-                    content,
-                    model: None,
-                } => ConversationItem::assistant(content),
+                    model,
+                    tool_calls,
+                } => ConversationItem::Assistant(AssistantItem {
+                    content: Arc::<str>::from(content),
+                    model_id: model,
+                    tool_calls: tool_calls
+                        .into_iter()
+                        .map(|call| SamplingToolCall {
+                            id: Arc::<str>::from(call.id),
+                            name: call.name,
+                            arguments: Arc::<str>::from(call.arguments),
+                        })
+                        .collect(),
+                    model_fingerprint: None,
+                    reasoning_effort: None,
+                }),
                 InputItem::ToolResult { call_id, content } => {
                     ConversationItem::tool_result(call_id, content)
                 }
@@ -568,5 +581,32 @@ mod tests {
             request.tool_choice,
             Some(ConversationToolChoice::Auto)
         ));
+    }
+
+    #[test]
+    fn preserves_assistant_tool_calls_for_follow_up_turns() {
+        let request = conversation_request(TurnRequest {
+            items: vec![InputItem::Assistant {
+                content: String::new(),
+                model: Some("model-a".into()),
+                tool_calls: vec![ToolCall {
+                    id: "call-1".into(),
+                    name: "calendar_lookup".into(),
+                    arguments: r#"{"date":"tomorrow"}"#.into(),
+                }],
+            }],
+            tools: Vec::new(),
+            tool_choice: ToolChoice::None,
+            temperature: None,
+            max_output_tokens: None,
+        });
+
+        let ConversationItem::Assistant(assistant) = &request.items[0] else {
+            panic!("expected assistant item");
+        };
+        assert_eq!(assistant.model_id.as_deref(), Some("model-a"));
+        assert_eq!(assistant.tool_calls.len(), 1);
+        assert_eq!(assistant.tool_calls[0].id.as_ref(), "call-1");
+        assert_eq!(assistant.tool_calls[0].name, "calendar_lookup");
     }
 }
