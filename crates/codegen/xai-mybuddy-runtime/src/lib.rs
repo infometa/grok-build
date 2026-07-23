@@ -9,6 +9,9 @@ use serde_json::Value;
 use std::fmt::{Debug, Display, Formatter};
 use std::sync::Arc;
 use tokio::sync::mpsc;
+use xai_grok_compaction::{
+    build_summary_prompt, format_compact_summary_content, is_degenerate_summary,
+};
 use xai_grok_sampler::{
     AuthScheme, RequestId, RetryPolicy, SamplerActor, SamplerConfig, SamplerHandle,
     SamplingChannel, SamplingEvent,
@@ -190,6 +193,99 @@ pub struct TurnOutput {
     pub tool_calls: Vec<ToolCall>,
     pub stop_reason: Option<String>,
     pub usage: Option<TokenUsage>,
+}
+
+/// A validated compaction failure returned by the Grok Build-backed facade.
+///
+/// The desktop host owns when to compact and persistence. This error keeps the
+/// Grok Build summary quality gate at the product boundary without exposing
+/// upstream internal error types.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CompactionError {
+    message: String,
+}
+
+impl CompactionError {
+    fn new(message: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+        }
+    }
+}
+
+impl Display for CompactionError {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for CompactionError {}
+
+/// Build the canonical Grok Build full-history compaction request.
+///
+/// The existing history is sent verbatim and Grok Build's structured summary
+/// prompt is appended as the final user message, matching the upstream
+/// full-replace compaction flow. Tools are explicitly disabled so a provider
+/// can never execute actions while summarising prior context.
+pub fn compaction_request(history: Vec<InputItem>) -> Result<TurnRequest, CompactionError> {
+    if history.is_empty() {
+        return Err(CompactionError::new("cannot compact an empty history"));
+    }
+
+    let mut items = history;
+    items.push(InputItem::User {
+        content: build_summary_prompt(None),
+    });
+    Ok(TurnRequest {
+        items,
+        tools: Vec::new(),
+        tool_choice: ToolChoice::None,
+        temperature: None,
+        max_output_tokens: None,
+    })
+}
+
+/// Rebuild a compacted MyBuddy history using Grok Build's continuation carrier.
+///
+/// All prior assistant/tool output is replaced. Original system instructions
+/// and the most recent user request remain verbatim; the cleaned summary then
+/// carries the earlier context forward. A short or malformed model response is
+/// rejected instead of silently destroying the session history.
+pub fn compacted_history(
+    history: &[InputItem],
+    raw_summary: &str,
+) -> Result<Vec<InputItem>, CompactionError> {
+    if is_degenerate_summary(raw_summary) {
+        return Err(CompactionError::new(
+            "compaction response was too short to preserve session context",
+        ));
+    }
+
+    let mut compacted = history
+        .iter()
+        .filter_map(|item| match item {
+            InputItem::System { content } => Some(InputItem::System {
+                content: content.clone(),
+            }),
+            InputItem::User { .. } | InputItem::Assistant { .. } | InputItem::ToolResult { .. } => {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+
+    if let Some(InputItem::User { content }) = history
+        .iter()
+        .rev()
+        .find(|item| matches!(item, InputItem::User { .. }))
+    {
+        compacted.push(InputItem::User {
+            content: content.clone(),
+        });
+    }
+    compacted.push(InputItem::User {
+        content: format_compact_summary_content(raw_summary),
+    });
+    Ok(compacted)
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -583,5 +679,79 @@ mod tests {
             request.tool_choice,
             Some(ConversationToolChoice::Auto)
         ));
+    }
+
+    #[test]
+    fn compaction_request_uses_the_grok_build_summary_prompt_without_tools() {
+        let request = compaction_request(vec![
+            InputItem::System {
+                content: "You are MyBuddy".into(),
+            },
+            InputItem::User {
+                content: "Implement the runtime".into(),
+            },
+        ])
+        .expect("history can be compacted");
+
+        assert!(request.tools.is_empty());
+        assert_eq!(request.tool_choice, ToolChoice::None);
+        assert!(matches!(
+            request.items.last(),
+            Some(InputItem::User { content }) if content.contains("1. Primary Request and Intent")
+        ));
+    }
+
+    #[test]
+    fn compacted_history_keeps_system_and_last_request_with_clean_summary() {
+        let history = vec![
+            InputItem::System {
+                content: "You are MyBuddy".into(),
+            },
+            InputItem::User {
+                content: "First request".into(),
+            },
+            InputItem::Assistant {
+                content: "First response".into(),
+                model: None,
+                tool_calls: Vec::new(),
+            },
+            InputItem::User {
+                content: "Continue with the second request".into(),
+            },
+            InputItem::ToolResult {
+                call_id: "call-1".into(),
+                content: "unbounded tool output".into(),
+            },
+        ];
+        let raw_summary = format!(
+            "<analysis>private scratchpad</analysis><summary>\n1. Primary Request and Intent: complete MyBuddy.\n{}\n</summary>",
+            "Details that must survive compaction. ".repeat(20)
+        );
+
+        let compacted = compacted_history(&history, &raw_summary).expect("summary is sufficient");
+        assert_eq!(compacted.len(), 3);
+        assert!(matches!(
+            &compacted[0],
+            InputItem::System { content } if content == "You are MyBuddy"
+        ));
+        assert!(matches!(
+            &compacted[1],
+            InputItem::User { content } if content == "Continue with the second request"
+        ));
+        assert!(matches!(
+            &compacted[2],
+            InputItem::User { content }
+                if content.contains("This session is being continued")
+                    && content.contains("Summary:\n1. Primary Request")
+                    && !content.contains("private scratchpad")
+        ));
+    }
+
+    #[test]
+    fn compacted_history_rejects_a_degenerate_summary() {
+        let history = vec![InputItem::User {
+            content: "Keep this task".into(),
+        }];
+        assert!(compacted_history(&history, "<summary>too short</summary>").is_err());
     }
 }

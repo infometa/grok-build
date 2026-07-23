@@ -14339,6 +14339,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tokio",
+ "xai-grok-compaction",
  "xai-grok-sampler",
  "xai-grok-sampling-types",
 ]
