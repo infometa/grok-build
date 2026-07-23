@@ -74,7 +74,9 @@ impl Debug for ModelConfig {
 impl ModelConfig {
     pub fn validate(&self) -> Result<(), ConfigError> {
         if !(self.base_url.starts_with("https://") || self.base_url.starts_with("http://")) {
-            return Err(ConfigError::new("base_url must start with http:// or https://"));
+            return Err(ConfigError::new(
+                "base_url must start with http:// or https://",
+            ));
         }
         if self.model.trim().is_empty() {
             return Err(ConfigError::new("model must not be empty"));
@@ -83,7 +85,9 @@ impl ModelConfig {
             return Err(ConfigError::new("context_window must be greater than zero"));
         }
         if self.idle_timeout_secs == 0 {
-            return Err(ConfigError::new("idle_timeout_secs must be greater than zero"));
+            return Err(ConfigError::new(
+                "idle_timeout_secs must be greater than zero",
+            ));
         }
         if self
             .api_key
@@ -105,7 +109,9 @@ pub struct ConfigError {
 
 impl ConfigError {
     fn new(message: impl Into<String>) -> Self {
-        Self { message: message.into() }
+        Self {
+            message: message.into(),
+        }
     }
 }
 
@@ -120,15 +126,22 @@ impl std::error::Error for ConfigError {}
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "role", rename_all = "snake_case")]
 pub enum InputItem {
-    System { content: String },
-    User { content: String },
+    System {
+        content: String,
+    },
+    User {
+        content: String,
+    },
     Assistant {
         content: String,
         model: Option<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         tool_calls: Vec<ToolCall>,
     },
-    ToolResult { call_id: String, content: String },
+    ToolResult {
+        call_id: String,
+        content: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -184,23 +197,44 @@ pub struct TurnOutput {
 pub enum RuntimeEvent {
     StreamStarted,
     FirstToken,
-    TextDelta { text: String },
-    ReasoningDelta { text: String },
+    TextDelta {
+        text: String,
+    },
+    ReasoningDelta {
+        text: String,
+    },
     ToolCallDelta {
         index: u32,
         id: Option<String>,
         name: Option<String>,
         arguments_delta: Option<String>,
     },
-    Retrying { attempt: u32, max_retries: u32, reason: String },
+    Retrying {
+        attempt: u32,
+        max_retries: u32,
+        reason: String,
+    },
     ModelMetadata {
         context_window: Option<u64>,
         max_completion_tokens: Option<u64>,
     },
-    BackendToolStarted { call_id: String, name: String },
-    BackendToolCompleted { call_id: String, name: String, result: Option<Value> },
-    Completed { output: TurnOutput },
-    Failed { kind: String, message: String, retryable: bool },
+    BackendToolStarted {
+        call_id: String,
+        name: String,
+    },
+    BackendToolCompleted {
+        call_id: String,
+        name: String,
+        result: Option<Value>,
+    },
+    Completed {
+        output: TurnOutput,
+    },
+    Failed {
+        kind: String,
+        message: String,
+        retryable: bool,
+    },
 }
 
 /// In-process sampler entry point. Construction performs no network I/O.
@@ -221,17 +255,27 @@ impl EmbeddedSampler {
         let (event_tx, event_rx) = mpsc::unbounded_channel();
         let sampler = SamplerActor::spawn(
             sampler_config(&self.config),
-            RetryPolicy { max_retries: self.config.max_retries, ..RetryPolicy::default() },
+            RetryPolicy {
+                max_retries: self.config.max_retries,
+                ..RetryPolicy::default()
+            },
             event_tx,
         );
         sampler.submit(request_id.clone(), conversation_request(request));
-        TurnHandle { request_id, sampler, events: event_rx }
+        TurnHandle {
+            request_id,
+            sampler,
+            events: event_rx,
+        }
     }
 }
 
 impl Debug for EmbeddedSampler {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> std::fmt::Result {
-        formatter.debug_struct("EmbeddedSampler").field("config", &self.config).finish()
+        formatter
+            .debug_struct("EmbeddedSampler")
+            .field("config", &self.config)
+            .finish()
     }
 }
 
@@ -242,9 +286,13 @@ pub struct TurnHandle {
 }
 
 impl TurnHandle {
-    pub fn request_id(&self) -> &str { self.request_id.as_str() }
+    pub fn request_id(&self) -> &str {
+        self.request_id.as_str()
+    }
 
-    pub fn cancel(&self) { self.sampler.cancel(self.request_id.clone()); }
+    pub fn cancel(&self) {
+        self.sampler.cancel(self.request_id.clone());
+    }
 
     pub async fn next_event(&mut self) -> Option<RuntimeEvent> {
         while let Some(event) = self.events.recv().await {
@@ -258,7 +306,9 @@ impl TurnHandle {
 
 fn sampler_config(config: &ModelConfig) -> SamplerConfig {
     let extra_headers = if config.protocol == Protocol::Messages {
-        [("anthropic-version".into(), ANTHROPIC_VERSION.into())].into_iter().collect()
+        [("anthropic-version".into(), ANTHROPIC_VERSION.into())]
+            .into_iter()
+            .collect()
     } else {
         Default::default()
     };
@@ -304,23 +354,44 @@ fn map_effort(effort: Effort) -> ReasoningEffort {
 
 fn conversation_request(request: TurnRequest) -> ConversationRequest {
     ConversationRequest {
-        items: request.items.into_iter().map(|item| match item {
-            InputItem::System { content } => ConversationItem::system(content),
-            InputItem::User { content } => ConversationItem::user(content),
-            InputItem::Assistant { content, model, tool_calls } => ConversationItem::Assistant(AssistantItem {
-                content: Arc::<str>::from(content),
-                model_id: model,
-                tool_calls: tool_calls.into_iter().map(|call| SamplingToolCall {
-                    id: Arc::<str>::from(call.id), name: call.name, arguments: Arc::<str>::from(call.arguments),
-                }).collect(),
-                model_fingerprint: None,
-                reasoning_effort: None,
-            }),
-            InputItem::ToolResult { call_id, content } => ConversationItem::tool_result(call_id, content),
-        }).collect(),
-        tools: request.tools.into_iter().map(|tool| ToolSpec {
-            name: tool.name, description: tool.description, parameters: tool.parameters,
-        }).collect(),
+        items: request
+            .items
+            .into_iter()
+            .map(|item| match item {
+                InputItem::System { content } => ConversationItem::system(content),
+                InputItem::User { content } => ConversationItem::user(content),
+                InputItem::Assistant {
+                    content,
+                    model,
+                    tool_calls,
+                } => ConversationItem::Assistant(AssistantItem {
+                    content: Arc::<str>::from(content),
+                    model_id: model,
+                    tool_calls: tool_calls
+                        .into_iter()
+                        .map(|call| SamplingToolCall {
+                            id: Arc::<str>::from(call.id),
+                            name: call.name,
+                            arguments: Arc::<str>::from(call.arguments),
+                        })
+                        .collect(),
+                    model_fingerprint: None,
+                    reasoning_effort: None,
+                }),
+                InputItem::ToolResult { call_id, content } => {
+                    ConversationItem::tool_result(call_id, content)
+                }
+            })
+            .collect(),
+        tools: request
+            .tools
+            .into_iter()
+            .map(|tool| ToolSpec {
+                name: tool.name,
+                description: tool.description,
+                parameters: tool.parameters,
+            })
+            .collect(),
         tool_choice: Some(match request.tool_choice {
             ToolChoice::Auto => ConversationToolChoice::Auto,
             ToolChoice::None => ConversationToolChoice::None,
@@ -355,20 +426,45 @@ fn map_event(event: SamplingEvent) -> RuntimeEvent {
             SamplingChannel::Text => RuntimeEvent::TextDelta { text },
             SamplingChannel::Reasoning => RuntimeEvent::ReasoningDelta { text },
         },
-        SamplingEvent::ToolCallDelta { tool_index, id, name, arguments_delta, .. } => {
-            RuntimeEvent::ToolCallDelta { index: tool_index, id, name, arguments_delta }
-        }
-        SamplingEvent::Retrying { attempt, max_retries, reason, .. } => {
-            RuntimeEvent::Retrying { attempt, max_retries, reason }
-        }
+        SamplingEvent::ToolCallDelta {
+            tool_index,
+            id,
+            name,
+            arguments_delta,
+            ..
+        } => RuntimeEvent::ToolCallDelta {
+            index: tool_index,
+            id,
+            name,
+            arguments_delta,
+        },
+        SamplingEvent::Retrying {
+            attempt,
+            max_retries,
+            reason,
+            ..
+        } => RuntimeEvent::Retrying {
+            attempt,
+            max_retries,
+            reason,
+        },
         SamplingEvent::ModelMetadata { metadata, .. } => RuntimeEvent::ModelMetadata {
-            context_window: metadata.context_window.map(u64::from),
+            context_window: metadata.context_window,
             max_completion_tokens: metadata.max_completion_tokens.map(u64::from),
         },
-        SamplingEvent::BackendToolCallStarted { call_id, name, .. } => RuntimeEvent::BackendToolStarted { call_id, name },
-        SamplingEvent::BackendToolCallCompleted { call_id, name, result, .. } => {
-            RuntimeEvent::BackendToolCompleted { call_id, name, result }
+        SamplingEvent::BackendToolCallStarted { call_id, name, .. } => {
+            RuntimeEvent::BackendToolStarted { call_id, name }
         }
+        SamplingEvent::BackendToolCallCompleted {
+            call_id,
+            name,
+            result,
+            ..
+        } => RuntimeEvent::BackendToolCompleted {
+            call_id,
+            name,
+            result,
+        },
         SamplingEvent::Completed { response, .. } => {
             let usage = response.usage.as_ref().map(|usage| TokenUsage {
                 prompt_tokens: usage.prompt_tokens,
@@ -377,16 +473,30 @@ fn map_event(event: SamplingEvent) -> RuntimeEvent {
                 reasoning_tokens: usage.reasoning_tokens,
                 cached_prompt_tokens: usage.cached_prompt_tokens,
             });
-            let tool_calls = response.tool_calls().iter().map(|call| ToolCall {
-                id: call.id.to_string(), name: call.name.clone(), arguments: call.arguments.to_string(),
-            }).collect();
-            RuntimeEvent::Completed { output: TurnOutput {
-                text: response.assistant_text(), tool_calls,
-                stop_reason: response.stop_reason.map(|reason| reason.as_str().to_string()), usage,
-            }}
+            let tool_calls = response
+                .tool_calls()
+                .iter()
+                .map(|call| ToolCall {
+                    id: call.id.to_string(),
+                    name: call.name.clone(),
+                    arguments: call.arguments.to_string(),
+                })
+                .collect();
+            RuntimeEvent::Completed {
+                output: TurnOutput {
+                    text: response.assistant_text(),
+                    tool_calls,
+                    stop_reason: response
+                        .stop_reason
+                        .map(|reason| reason.as_str().to_string()),
+                    usage,
+                },
+            }
         }
         SamplingEvent::Failed { error, .. } => RuntimeEvent::Failed {
-            kind: error.kind.as_str().to_string(), message: error.message, retryable: error.is_retryable,
+            kind: error.kind.as_str().to_string(),
+            message: error.message,
+            retryable: error.is_retryable,
         },
     }
 }
@@ -397,9 +507,14 @@ mod tests {
 
     fn model_config(protocol: Protocol) -> ModelConfig {
         ModelConfig {
-            base_url: "https://provider.example/v1".into(), api_key: Some("super-secret".into()),
-            model: "model-a".into(), protocol, context_window: 128_000,
-            reasoning_effort: Some(Effort::High), max_retries: 2, idle_timeout_secs: 300,
+            base_url: "https://provider.example/v1".into(),
+            api_key: Some("super-secret".into()),
+            model: "model-a".into(),
+            protocol,
+            context_window: 128_000,
+            reasoning_effort: Some(Effort::High),
+            max_retries: 2,
+            idle_timeout_secs: 300,
         }
     }
 
@@ -415,13 +530,23 @@ mod tests {
         let config = sampler_config(&model_config(Protocol::Messages));
         assert_eq!(config.api_backend, ApiBackend::Messages);
         assert_eq!(config.auth_scheme, AuthScheme::XApiKey);
-        assert_eq!(config.extra_headers.get("anthropic-version").map(String::as_str), Some(ANTHROPIC_VERSION));
+        assert_eq!(
+            config
+                .extra_headers
+                .get("anthropic-version")
+                .map(String::as_str),
+            Some(ANTHROPIC_VERSION)
+        );
     }
 
     #[test]
     fn openai_protocols_do_not_receive_anthropic_headers() {
         for protocol in [Protocol::ChatCompletions, Protocol::Responses] {
-            assert!(!sampler_config(&model_config(protocol)).extra_headers.contains_key("anthropic-version"));
+            assert!(
+                !sampler_config(&model_config(protocol))
+                    .extra_headers
+                    .contains_key("anthropic-version")
+            );
         }
     }
 
@@ -435,12 +560,28 @@ mod tests {
     #[test]
     fn converts_product_request_without_shell_types() {
         let request = conversation_request(TurnRequest {
-            items: vec![InputItem::System { content: "You are MyBuddy".into() }, InputItem::User { content: "Hello".into() }],
-            tools: vec![ToolDefinition { name: "read_file".into(), description: Some("Read a file".into()), parameters: serde_json::json!({"type": "object"}) }],
-            tool_choice: ToolChoice::Auto, temperature: None, max_output_tokens: Some(1024),
+            items: vec![
+                InputItem::System {
+                    content: "You are MyBuddy".into(),
+                },
+                InputItem::User {
+                    content: "Hello".into(),
+                },
+            ],
+            tools: vec![ToolDefinition {
+                name: "read_file".into(),
+                description: Some("Read a file".into()),
+                parameters: serde_json::json!({"type": "object"}),
+            }],
+            tool_choice: ToolChoice::Auto,
+            temperature: None,
+            max_output_tokens: Some(1024),
         });
         assert_eq!(request.items.len(), 2);
         assert_eq!(request.tools[0].name, "read_file");
-        assert!(matches!(request.tool_choice, Some(ConversationToolChoice::Auto)));
+        assert!(matches!(
+            request.tool_choice,
+            Some(ConversationToolChoice::Auto)
+        ));
     }
 }
